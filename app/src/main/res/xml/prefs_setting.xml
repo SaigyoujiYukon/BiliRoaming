@@ -165,11 +165,6 @@
             android:title="@string/customize_bottom_bar_title" />
         <SwitchPreference
             android:dependency="hidden"
-            android:key="add_channel"
-            android:summary="@string/add_channel_summary"
-            android:title="@string/add_channel_title" />
-        <SwitchPreference
-            android:dependency="hidden"
             android:key="purify_game"
             android:summary="@string/purify_game_summary"
             android:title="@string/purify_game_title" />
@@ -248,6 +243,13 @@
             android:key="customize_space"
             android:summary="@string/customize_space_summary"
             android:title="@string/customize_space_title" />
+        <MultiSelectListPreference
+            android:dependency="hidden"
+            android:entries="@array/block_video_ad"
+            android:entryValues="@array/block_video_ad_values"
+            android:key="block_upper_ad"
+            android:summary="@string/block_video_ad_summary"
+            android:title="@string/block_video_ad_title" />
     </PreferenceCategory>
 
     <PreferenceCategory
