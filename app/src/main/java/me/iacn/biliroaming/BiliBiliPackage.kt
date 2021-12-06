@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.os.Bundle
+import android.text.style.ClickableSpan
 import android.text.style.LineBackgroundSpan
 import android.util.Base64
 import android.util.SparseArray
@@ -227,6 +228,18 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
     }
     val videoUpperAdClass by Weak { mHookInfo["class_video_upper_ad"]?.findClassOrNull(mClassLoader) }
 
+    val ellipsizingTextViewClass by Weak {
+        "com.bilibili.bplus.followingcard.widget.EllipsizingTextView".findClassOrNull(
+            mClassLoader
+        )
+    }
+
+    val dynamicDescHolderListenerClass by Weak {
+        mHookInfo["class_dyn_desc_holder_listener"]?.findClassOrNull(
+            mClassLoader
+        )
+    }
+
     val classesList by lazy {
         mClassLoader.allClassesList {
             val serviceField = it.javaClass.findFirstFieldByExactTypeOrNull(
@@ -246,7 +259,7 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
                     it.getObjectFieldOrNull(serviceField.name)?.getObjectFieldOrNull(f.name)
                 }.firstOrNull { o ->
                     o?.javaClass?.name?.startsWith("com.bilibili") == false
-                } as BaseDexClassLoader? ?: it
+                } as? BaseDexClassLoader ?: it
             } else if (delegateField != null) {
                 val loaderField =
                     delegateField.type.findFirstFieldByExactTypeOrNull(ClassLoader::class.java)
@@ -354,6 +367,10 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
     fun pegasusFeed() = mHookInfo["method_pegasus_feed"]
 
     fun commentCopy() = mHookInfo["class_comment_long_click"]
+
+    fun descCopy() = mHookInfo["method_desc_copy"]
+
+    fun descCopyView() = mHookInfo["classes_desc_copy_view"]
 
     fun responseDataField() = lazy {
         try {
@@ -579,6 +596,10 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             findVideoUpperAd()
         }.checkOrPut("class_comment_span") {
             findCommentSpan()
+        }.checkOrPut("class_dyn_desc_holder_listener") {
+            findDynamicDescHolderListener()
+        }.checkConjunctiveOrPut("classes_desc_copy_view", "method_desc_copy") {
+            findDescCopyView()
         }
 
         Log.d(mHookInfo.filterKeys { it != "map_ids" })
@@ -592,6 +613,34 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
         c.findClass(mClassLoader).declaredFields.count {
             it.type == Float::class.javaPrimitiveType
         } > 1
+    }
+
+    private fun findDescCopyView(): Array<String?> {
+        val classes = ArrayList<String>()
+        val methods = ArrayList<String>()
+        classesList.filter {
+            it.startsWith("tv.danmaku.bili.ui.video.profile.info.DescViewHolder")
+        }.map { c ->
+            c.findClass(mClassLoader)
+        }.forEach { c ->
+            c.declaredMethods.firstOrNull { m ->
+                m.parameterTypes.size == 2 && m.parameterTypes[0] == View::class.java && m.parameterTypes[1] == ClickableSpan::class.java
+            }?.let { classes.add(c.name); methods.add(it.name) }
+        }
+        return if (classes.size > 0) arrayOf(
+            classes.joinToString(";"),
+            methods.joinToString(";")
+        ) else arrayOfNulls(2)
+    }
+
+    private fun findDynamicDescHolderListener() = classesList.filter {
+        it.startsWith("com.bilibili.bplus.followinglist.module.item")
+    }.firstOrNull { c ->
+        c.findClass(mClassLoader).run {
+            declaredMethods.filter {
+                it.name == "onLongClick"
+            }.count() == 1
+        }
     }
 
     private fun findVideoUpperAd(): Array<String?> {
