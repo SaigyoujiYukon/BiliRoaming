@@ -647,6 +647,8 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
         val adHolderClass =
             "com.bilibili.ad.adview.videodetail.upper.VideoUpperAdSectionViewHolder".findClassOrNull(
                 mClassLoader
+            ) ?: "com.bilibili.ad.adview.videodetail.upper.VideoUpperAdViewHolder".findClassOrNull(
+                mClassLoader
             ) ?: return arrayOfNulls(2)
         classesList.filter {
             it.startsWith("com.bilibili.ad.adview.videodetail.upper")
@@ -656,7 +658,6 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             c.declaredMethods.forEach { m ->
                 if (Modifier.isPublic(m.modifiers) && m.parameterTypes.size >= 2 &&
                     m.parameterTypes[0] == ViewGroup::class.java &&
-                    m.parameterTypes[1] == Int::class.javaPrimitiveType &&
                     m.returnType == adHolderClass
                 ) return arrayOf(c.name, m.name)
             }
@@ -1102,7 +1103,7 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
     }?.joinToString(";") { it.name }
 
     private fun findAddSettingMethod() = homeUserCenterClass?.declaredMethods?.firstOrNull {
-        it.parameterTypes.size == 2 && it.parameterTypes[0] == Context::class.java && it.parameterTypes[1] == List::class.java
+        it.parameterTypes.size >= 2 && it.parameterTypes[0] == Context::class.java && it.parameterTypes[1] == List::class.java
     }?.name
 
     private fun findSettingRouterClass() = classesList.filter {
