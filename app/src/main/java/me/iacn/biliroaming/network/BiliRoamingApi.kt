@@ -546,10 +546,14 @@ object BiliRoamingApi {
                 ep.put("ep_id", ep.optInt("id"))
                 ep.put("index", ep.optString("title"))
                 ep.put("indexTitle", ep.optString("long_title"))
-                if (ep.optInt("cid", 0) == 0)
+                if (ep.optInt("cid", 0) == 0) {
                     ep.put("cid", ep.optInt("id"))
-                if (ep.optInt("aid", 0) == 0)
+                    ep.optJSONObject("rights")?.put("allow_dm", 0)
+                }
+                if (ep.optInt("aid", 0) == 0) {
                     ep.put("aid", result.optInt("season_id"))
+                    ep.optJSONObject("rights")?.put("area_limit", 1)
+                }
                 ep.put("ep_index", eid + 1)
                 ep.put("section_index", sid + 1)
                 fixRight(ep)
@@ -565,6 +569,7 @@ object BiliRoamingApi {
         }
         result.put("style", style)
         result.optJSONObject("rights")?.put("watch_platform", 1)
+            ?.put("allow_comment", 0)
         result.apply {
             put("actors", result.optJSONObject("actor")?.optString("info"))
             put("is_paster_ads", 0)

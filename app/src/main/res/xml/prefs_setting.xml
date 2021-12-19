@@ -213,11 +213,16 @@
             android:key="search_area_movie"
             android:summary="@string/search_area_movie_summary"
             android:title="@string/search_area_movie_title" />
-        <Preference
+        <SwitchPreference
             android:dependency="hidden"
             android:key="customize_accessKey"
             android:summary="@string/customize_accessKey_summary"
             android:title="@string/customize_accessKey_title" />
+        <Preference
+            android:dependency="hidden"
+            android:key="force_th_comment"
+            android:summary="@string/force_th_comment_summary"
+            android:title="@string/force_th_comment_title" />
         <Preference
             android:dependency="hidden"
             android:key="export_video"
