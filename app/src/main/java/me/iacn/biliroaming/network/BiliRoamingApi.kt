@@ -372,6 +372,8 @@ object BiliRoamingApi {
         )
     }
 
+    class CustomServerException(val errors: Map<String, String>): Throwable()
+
     @JvmStatic
     private fun getFromCustomUrl(queryString: String?, priorityArea: Array<String>?): String? {
         queryString ?: return null
@@ -419,7 +421,7 @@ object BiliRoamingApi {
             }
         }
 
-        var content: String? = null
+        val errors: MutableMap<String, String> = mutableMapOf()
 
         for ((area, host) in hostList.toList().asReversed()) {
             val accessKey = instance.getCustomizeAccessKey("${area}_server") ?: ""
@@ -460,10 +462,10 @@ object BiliRoamingApi {
                     }
                     return if (area == "th") fixThailandPlayurl(it) else it
                 }
-                content = it
+                errors.put(area, JSONObject(it).optString("message"))
             }
         }
-        return content
+        throw CustomServerException(errors)
     }
 
     @JvmStatic
@@ -505,6 +507,9 @@ object BiliRoamingApi {
         val supportFormats = JSONArray()
         val dashVideo = JSONArray()
         for (stream in streamList.orEmpty()) {
+            if (stream.optJSONObject("dash_video")?.optString("base_url").isNullOrBlank()) {
+                continue
+            }
             stream.optJSONObject("stream_info")?.let {
                 supportFormats.put(it)
             }
