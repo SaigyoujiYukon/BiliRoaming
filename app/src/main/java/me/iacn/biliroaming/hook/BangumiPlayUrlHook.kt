@@ -1,7 +1,6 @@
 package me.iacn.biliroaming.hook
 
 import android.net.Uri
-import android.widget.Toast
 import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
 import me.iacn.biliroaming.Protos.*
 import me.iacn.biliroaming.hook.BangumiSeasonHook.Companion.lastSeasonInfo
@@ -174,14 +173,13 @@ class BangumiPlayUrlHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                         } ?: run {
                             showPlayerError(response, "获取播放地址失败。请检查哔哩漫游设置里的解析服务器设置。")
                         }
-                    } catch (e: CustomServerException){
+                    } catch (e: CustomServerException) {
                         var messages = ""
                         for (error in e.errors) {
                             messages += "${error.key}: ${error.value}\n"
                         }
-                        showPlayerError(response, "请求解析中服务器发生错误(见 弹出消息/日志)")
+                        showPlayerError(response, "请求解析中服务器发生错误(点此查看更多)\n${messages.trim()}")
                         Log.e("请求解析服务器发生错误: ${messages.trim()}")
-                        Log.toast("\n${messages.trim()}", true, Toast.LENGTH_LONG)
                     }
                 } else if (isDownload) {
                     param.result = fixDownloadProto(response)

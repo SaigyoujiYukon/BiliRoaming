@@ -1,6 +1,9 @@
 package me.iacn.biliroaming.hook
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -13,6 +16,7 @@ import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
 import me.iacn.biliroaming.Constant.TYPE_EPISODE_ID
 import me.iacn.biliroaming.Constant.TYPE_SEASON_ID
 import me.iacn.biliroaming.Protos
+import me.iacn.biliroaming.XposedInit
 import me.iacn.biliroaming.network.BiliRoamingApi
 import me.iacn.biliroaming.network.BiliRoamingApi.getAreaSearchBangumi
 import me.iacn.biliroaming.network.BiliRoamingApi.getContent
@@ -24,9 +28,10 @@ import java.lang.reflect.Method
 import java.net.URL
 import java.net.URLDecoder
 import java.util.*
+import java.util.concurrent.TimeUnit
+import kotlin.Array
 import kotlin.Boolean
 import kotlin.Int
-import kotlin.collections.HashMap
 import java.lang.reflect.Array as RArray
 
 
@@ -193,6 +198,16 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
         }
 
+        "com.bilibili.bangumi.ui.page.detail.BangumiDetailActivityV3".hookAfterMethod(
+            mClassLoader, "onCreate", Bundle::class.java
+        ) {
+            setErrorMessage(it.thisObject as Activity)
+        }
+        "com.bilibili.bangumi.ui.page.detail.BangumiDetailActivityV3".hookAfterMethod(
+            mClassLoader, "onConfigurationChanged", Configuration::class.java
+        ) {
+            setErrorMessage(it.thisObject as Activity)
+        }
 
         if (isBuiltIn && is64 && Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             Log.e("Not support")
@@ -424,6 +439,14 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             ) || sPrefs.getBoolean("search_area_movie", false))
         ) {
             for (area in AREA_TYPES) {
+                if (runCatching {
+                        XposedInit.country.get(
+                            5L,
+                            TimeUnit.SECONDS
+                        )
+                    }.getOrNull() == area.value.area) {
+                    continue
+                }
                 if (!sPrefs.getString(area.value.area + "_server", null).isNullOrBlank() &&
                     sPrefs.getBoolean("search_area_" + area.value.type_str, false)
                 ) {
@@ -462,7 +485,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 jsonResult == null
             )?.toJSONObject()?.let {
                 it.optInt("code", FAIL_CODE) to it.optJSONObject("result")
-            } ?: FAIL_CODE to null
+            } ?: (FAIL_CODE to null)
             if (isBangumiWithWatchPermission(newJsonResult, newCode)) {
                 Log.d("Got new season information from proxy server: $newJsonResult")
                 lastSeasonInfo["title"] = newJsonResult?.optString("title")
@@ -743,4 +766,34 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         return request?.getObjectField(urlField)?.toString()
     }
 
+    private fun setErrorMessage(activity: Activity) {
+        val job = MainScope().launch {
+            val id = getId("tv_desc")
+            while (true) {
+                if (activity.isDestroyed) break
+                val tvDesc = activity.findViewById<TextView>(id)
+                if (tvDesc == null) {
+                    delay(500)
+                    continue
+                }
+                tvDesc.maxLines = Int.MAX_VALUE
+                (tvDesc.parent as View).setOnClickListener {
+                    val lines = tvDesc.text.lines()
+                    val title = lines[0]
+                    val message = lines.subList(1, lines.size)
+                        .fold(StringBuilder()) { sb, line -> sb.appendLine(line) }
+                    AlertDialog.Builder(tvDesc.context)
+                        .setTitle(title)
+                        .setMessage(message)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+                break
+            }
+        }
+        MainScope().launch {
+            delay(15_000)
+            job.cancel()
+        }
+    }
 }
