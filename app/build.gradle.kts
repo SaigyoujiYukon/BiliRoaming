@@ -34,7 +34,7 @@ android {
 
     defaultConfig {
         applicationId = "me.iacn.biliroaming"
-        minSdk = 21
+        minSdk = 24
         targetSdk = 32  // Target Android Sv2
         versionCode = appVerCode.toInt()
         versionName = appVerName
@@ -168,8 +168,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-javalite:3.19.1")
     compileOnly("com.google.protobuf:protoc:3.19.1")
     implementation("org.jetbrains.kotlin:kotlin-stdlib:${rootProject.extra["kotlinVersion"]}")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.5.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.5.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.6.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
 }
 
