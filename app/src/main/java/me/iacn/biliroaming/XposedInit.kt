@@ -98,14 +98,17 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     startHook(CoverHook(lpparam.classLoader))
                     startHook(SubtitleHook(lpparam.classLoader))
                     startHook(CommentHook(lpparam.classLoader))
+                    startHook(LiveRoomHook(lpparam.classLoader))
                     startHook(RecommendHook(lpparam.classLoader))
                     startHook(QualityHook(lpparam.classLoader))
                     startHook(ReplaceStoryHook(lpparam.classLoader))
+                    startHook(PurifyShareHook(lpparam.classLoader))
                 }
                 lpparam.processName.endsWith(":web") -> {
                     BiliBiliPackage(lpparam.classLoader, param.args[0] as Context)
                     CustomThemeHook(lpparam.classLoader).insertColorForWebProcess()
                     startHook(WebViewHook(lpparam.classLoader))
+                    startHook(PurifyShareHook(lpparam.classLoader))
                 }
                 lpparam.processName.endsWith(":download") -> {
                     BiliBiliPackage(lpparam.classLoader, param.args[0] as Context)
@@ -125,7 +128,7 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
             hooker.startHook()
         } catch (e: Throwable) {
             Log.e(e)
-            Log.toast("出现错误${e.message}，部分功能可能失效。")
+            Log.toast("出现错误\n${e.message}\n部分功能可能失效。${e.stackTrace.joinToString("\n")}")
         }
     }
 
@@ -135,7 +138,7 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 it.lateInitHook()
             } catch (e: Throwable) {
                 Log.e(e)
-                Log.toast("出现错误${e.message}，部分功能可能失效。")
+                Log.toast("出现错误\n${e.message}\n部分功能可能失效。${e.stackTrace.joinToString("\n")}")
             }
         }
     }
