@@ -272,6 +272,14 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
         mHookInfo["class_kanban_callback"]?.findClassOrNull(mClassLoader)
     }
 
+    val toastHelper by Weak {
+        "com.bilibili.droid.ToastHelper".findClassOrNull(mClassLoader)
+    }
+
+    val videoDetailCallback by Weak {
+        mHookInfo["class_video_detail_callback"]?.findClassOrNull(mClassLoader)
+    }
+
     val classesList by lazy {
         mClassLoader.allClassesList {
             val serviceField = it.javaClass.findFirstFieldByExactTypeOrNull(
@@ -429,6 +437,10 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
     fun setState() = mHookInfo["method_set_state"]
 
     fun kanbanCallback() = mHookInfo["method_kanban_callback"]
+
+    fun showToast() = mHookInfo["method_show_toast"]
+
+    fun cancelShowToast() = mHookInfo["method_cancel_show_toast"]
 
     private fun readHookInfo(context: Context): MutableMap<String, String?> {
         try {
@@ -835,16 +847,16 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
                     ?.runCatchingOrNull {
                         getDeclaredMethod("isUseKanBan")
                     }?.let {
-                    helper.encodeMethodIndex(it)
-                }?.let {
-                    helper.findMethodInvoked(it, -1, 1, "VL", -1, null, null, null, true)
-                        ?.firstOrNull()
-                }?.let {
-                    helper.decodeMethodIndex(it)
-                }?.let {
-                    mHookInfo["class_kanban_callback"] = it.declaringClass.name
-                    mHookInfo["method_kanban_callback"] = it.name
-                }
+                        helper.encodeMethodIndex(it)
+                    }?.let {
+                        helper.findMethodInvoked(it, -1, 1, "VL", -1, null, null, null, true)
+                            ?.firstOrNull()
+                    }?.let {
+                        helper.decodeMethodIndex(it)
+                    }?.let {
+                        mHookInfo["class_kanban_callback"] = it.declaringClass.name
+                        mHookInfo["method_kanban_callback"] = it.name
+                    }
 
 //                val class_music_wrap_player = helper.findMethodUsingString("MusicWrapperPlayer", false, -1, 3, "VLIL", -1, null, null, null, true).map {
 //                    helper.decodeMethodIndex(it)
@@ -927,6 +939,8 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             findLikeMethod()
         }.checkOrPut("method_party_like") {
             findPartyLikeMethod()
+        }.checkOrPut("class_video_detail_callback") {
+            findVideoDetailCallback()
         }.checkOrPut("class_download_thread_listener") {
             findDownloadThreadListener()
         }.checkOrPut("field_download_thread") {
@@ -935,14 +949,14 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             findReportDownloadThread()
         }.checkConjunctiveOrPut("class_garb_helper", "method_garb") {
             findGarbHelper()
+        }.checkOrPut("class_abs_music_service") {
+            findAbsMusicService()
         }.checkOrPut("class_music_notification_helper") {
             findMusicNotificationHelper()
         }.checkOrPut("class_live_notification_helper") {
             findLiveNotificationHelper()
         }.checkConjunctiveOrPut("methods_set_notification", "class_notification_builder") {
             findSetNotificationMethods()
-        }.checkOrPut("class_abs_music_service") {
-            findAbsMusicService()
         }.checkOrPut("class_drawer_layout_params") {
             findDrawerLayoutParams()
         }.checkConjunctiveOrPut("method_open_drawer", "method_close_drawer") {
@@ -1006,14 +1020,41 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             "onSeekComplete"
         }.checkOrPut("class_player_on_seek_complete") {
             findPlayerOnSeekComplete()
+        }.checkOrPut("class_player_service") {
+            findPlayerService()
         }.checkConjunctiveOrPut("class_kanban_callback", "method_kanban_callback") {
             findKanbanCallback()
+        }.checkOrPut("method_show_toast") {
+            findShowToast()
+        }.checkOrPut("method_cancel_show_toast") {
+            findCancelShowToast()
         }
 
         Log.d(mHookInfo.filterKeys { it != "map_ids" })
         Log.d("Check hook info completed: needUpdate = $needUpdate")
         return needUpdate
     }
+
+    private fun findVideoDetailCallback(): String? {
+        val callback = "com.bilibili.okretro.BiliApiDataCallback".findClassOrNull(mClassLoader)
+        return classesList.filter {
+            it.startsWith("tv.danmaku.bili.ui.video.videodetail.function")
+        }.map { c ->
+            c.findClass(mClassLoader)
+        }.filter {
+            it.superclass == callback
+        }.firstOrNull {
+            it.declaredFields.size == 1
+        }?.name
+    }
+
+    private fun findPlayerService() =
+        backgroundPlayer?.declaredFields?.firstOrNull {
+            it.type.name.run {
+                startsWith("tv.danmaku.biliplayerv2") &&
+                        !startsWith("tv.danmaku.biliplayerv2.service")
+            }
+        }?.type?.name
 
     private fun findKanbanCallback(): Array<String?> {
         val status = "tv.danmaku.bili.ui.kanban.KanBanUserStatus".findClassOrNull(mClassLoader)
@@ -1033,13 +1074,17 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
     }
 
     private fun findBangumiUniformSeason() = classesList.filter {
-        it.startsWith("com.bilibili.bangumi.data.page.detail.entity")
+        it.startsWith("com.bilibili.bangumi.data.page.detail")
     }.firstOrNull { c ->
         c.findClass(mClassLoader).declaredClasses.size >= 20
     }
+        ?: "com.bilibili.bangumi.data.page.detail.SeasonRepository".findClassOrNull(mClassLoader)?.declaredMethods?.mapNotNull { m ->
+            m.parameterTypes.firstOrNull()
+        }?.firstOrNull { c -> c.declaredClasses.size >= 20 }?.name
 
     private fun findPlayerOnSeekComplete() = classesList.filter {
-        playerCoreServiceV2Class?.name?.let { name -> it.startsWith(name) } ?: false
+        playerCoreServiceV2Class?.name?.let { name -> it.startsWith(name.substringBeforeLast('.')) }
+            ?: false
     }.firstOrNull { c ->
         c.findClass(mClassLoader).interfaces.map { it.name }
             .contains("tv.danmaku.ijk.media.player.IMediaPlayer\$OnSeekCompleteListener")
@@ -1067,7 +1112,7 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
         }?.map {
             it.type
         }?.firstOrNull {
-            it.name.startsWith("tv.danmaku.bili.ui.player.notification")
+            it.isInterface && it.name.startsWith("tv.danmaku.bili.ui.player.notification")
         }
         return classesList.filter {
             it.startsWith("tv.danmaku.biliplayerv2.service.business.background")
@@ -1242,7 +1287,7 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
                 ?: "tv.danmaku.biliplayerimpl.core.PlayerCoreServiceV2".findClassOrNull(mClassLoader)
                 ?: classesList.filter {
                     it.startsWith("tv.danmaku.biliplayerv2.service") ||
-                            it.startsWith("tv.danmaku.biliplayerimpl")
+                            it.startsWith("tv.danmaku.biliplayerimpl") || it.startsWith("dn2")
                 }.firstOrNull { c ->
                     c.findClass(mClassLoader).declaredFields.any {
                         it.type.name == "tv.danmaku.ijk.media.player.IMediaPlayer\$OnErrorListener"
@@ -1358,19 +1403,40 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
             arrayOf(name, parameterTypes[0].name)
         } ?: arrayOfNulls(2)
 
-    private fun findMusicNotificationHelper() = classesList.filter {
-        it.startsWith("tv.danmaku.bili.ui.player.notification")
-    }.firstOrNull { c ->
-        c.findClass(mClassLoader).declaredFields.any {
-            it.type == PendingIntent::class.java
+    private fun findMusicNotificationHelper(): String? {
+        val prefix = absMusicServiceClass?.declaredFields?.firstOrNull {
+            it.type.name.count { c -> c == '.' } == 1
+        }?.type?.name?.substringBefore(
+            '.',
+            ".."
+        )
+        return classesList.filter {
+            it.startsWith("tv.danmaku.bili.ui.player.notification") || it.startsWith(prefix ?: "..")
+        }.firstOrNull { c ->
+            c.findClass(mClassLoader).declaredFields.any {
+                it.type == PendingIntent::class.java
+            }
         }
     }
 
-    private fun findLiveNotificationHelper() = classesList.filter {
-        it.startsWith("com.bilibili.bililive.room.ui.liveplayer.background")
-    }.firstOrNull { c ->
-        c.findClass(mClassLoader).declaredFields.any {
-            it.type == PendingIntent::class.java
+    private fun findLiveNotificationHelper(): String? {
+        val prefix =
+            "com.bilibili.bililive.room.ui.liveplayer.background.AbsLiveBackgroundPlayerService".findClassOrNull(
+                mClassLoader
+            )?.declaredFields?.firstOrNull {
+                it.type.name.count { c -> c == '.' } == 1
+            }?.type?.name?.substringBefore(
+                '.',
+                ".."
+            )
+        return classesList.filter {
+            it.startsWith("com.bilibili.bililive.room.ui.liveplayer.background") || it.startsWith(
+                prefix ?: ".."
+            )
+        }.firstOrNull { c ->
+            c.findClass(mClassLoader).declaredFields.any {
+                it.type == PendingIntent::class.java
+            }
         }
     }
 
@@ -1585,7 +1651,7 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
         it.startsWith("tv.danmaku.bili.ui.video.party.section") ||
                 it.startsWith("com.bilibili.video.videodetail.party.section") ||
                 it.startsWith("tv.danmaku.bili.ui.video.profile.action") ||
-                it.startsWith("tv.danmaku.bili.ui.video.section.action")
+                it.startsWith("tv.danmaku.bili.ui.video.section.action") || it.startsWith("aj2")
     }.firstOrNull { c ->
         c.findClass(mClassLoader).declaredFields.any {
             it.type == progressBarClass
@@ -1641,6 +1707,17 @@ class BiliBiliPackage constructor(private val mClassLoader: ClassLoader, mContex
 
     private fun findDownloadThreadField() = downloadingActivityClass?.declaredFields?.firstOrNull {
         it.type == Int::class.javaPrimitiveType
+    }?.name
+
+    private fun findShowToast() = toastHelper?.declaredMethods?.firstOrNull {
+        it.isStatic && it.parameterTypes.size == 3 &&
+                it.parameterTypes[0] == Context::class.java &&
+                it.parameterTypes[1] == String::class.java &&
+                it.parameterTypes[2] == Int::class.javaPrimitiveType
+    }?.name
+
+    private fun findCancelShowToast() = toastHelper?.declaredMethods?.firstOrNull {
+        it.isStatic && it.parameterTypes.isEmpty()
     }?.name
 
 

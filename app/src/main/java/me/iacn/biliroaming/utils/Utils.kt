@@ -102,7 +102,7 @@ val platform by lazy {
 
 val logFile by lazy { File(currentContext.externalCacheDir, "log.txt") }
 
-val toastHelper by lazy { currentContext.classLoader.runCatchingOrNull { loadClass("com.bilibili.droid.ToastHelper") } }
+val oldLogFile by lazy { File(currentContext.externalCacheDir, "old_log.txt") }
 
 @Suppress("DEPRECATION")
 val sPrefs
