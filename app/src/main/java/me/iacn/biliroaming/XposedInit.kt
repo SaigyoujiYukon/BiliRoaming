@@ -49,9 +49,7 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
             @Suppress("DEPRECATION")
             when {
                 !lpparam.processName.contains(":") -> {
-                    if (sPrefs.getBoolean("save_log", false) ||
-                        sPrefs.getBoolean("show_hint", true)
-                    ) {
+                    if (shouldSaveLog) {
                         startLog()
                     }
                     Log.d("BiliBili process launched ...")
@@ -61,8 +59,13 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     Log.d("Config: ${sPrefs.all}")
                     Log.toast(
                         "哔哩漫游已激活${
-                            if (sPrefs.getBoolean("main_func", false)) ""
-                            else "。\n但未启用番剧解锁功能，请检查哔哩漫游设置。"
+                            if (sPrefs.getBoolean("main_func", false) &&
+                                (!sPrefs.getString("hk_server", null).isNullOrEmpty() ||
+                                        !sPrefs.getString("th_server", null).isNullOrEmpty() ||
+                                        !sPrefs.getString("tw_server", null).isNullOrEmpty() ||
+                                        !sPrefs.getString("cn_server", null).isNullOrEmpty())
+                            ) ""
+                            else "。\n但未启用番剧解锁功能，请检查解析服务器设置。"
                         }\n请勿在B站任何地方宣传漫游。\n漫游插件开源免费，谨防被骗。"
                     )
 
@@ -97,7 +100,7 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     startHook(DrawerHook(lpparam.classLoader))
                     startHook(CoverHook(lpparam.classLoader))
                     startHook(SubtitleHook(lpparam.classLoader))
-                    startHook(CommentHook(lpparam.classLoader))
+                    startHook(CopyHook(lpparam.classLoader))
                     startHook(LiveRoomHook(lpparam.classLoader))
                     startHook(RecommendHook(lpparam.classLoader))
                     startHook(QualityHook(lpparam.classLoader))

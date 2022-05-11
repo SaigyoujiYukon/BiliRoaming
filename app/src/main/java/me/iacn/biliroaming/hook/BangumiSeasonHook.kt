@@ -20,6 +20,7 @@ import me.iacn.biliroaming.network.BiliRoamingApi
 import me.iacn.biliroaming.network.BiliRoamingApi.getAreaSearchBangumi
 import me.iacn.biliroaming.network.BiliRoamingApi.getContent
 import me.iacn.biliroaming.network.BiliRoamingApi.getSeason
+import me.iacn.biliroaming.network.BiliRoamingApi.getSpace
 import me.iacn.biliroaming.utils.*
 import org.json.JSONObject
 import java.io.InputStream
@@ -59,13 +60,6 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 514 to Area("cn", "陆", "7", "bangumi"),
                 1919 to Area("hk", "港", "7", "bangumi"),
                 810 to Area("tw", "台", "7", "bangumi")
-            )
-
-        private val USER_SPACES =
-            mapOf(
-                "11783021" to "哔哩哔哩番剧出差",
-                "1988098633" to "b站_戲劇咖",
-                "2042149112" to "b站_綜藝咖"
             )
     }
 
@@ -153,6 +147,16 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             mClassLoader
         )
     }
+    private val biliSearchOgvResultClass by Weak {
+        "com.bilibili.search.ogv.BiliSearchOgvResult".findClassOrNull(
+            mClassLoader
+        )
+    }
+    private val baseSearchItemClass by Weak {
+        "com.bilibili.search.api.BaseSearchItem".findClassOrNull(
+            mClassLoader
+        )
+    }
 
     override fun startHook() {
         if (!sPrefs.getBoolean("main_func", false)) return
@@ -225,7 +229,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                         }?.apply {
                             put(
                                 "data",
-                                fixBangumi(optJSONObject("data"), optInt("code", FAIL_CODE))
+                                fixBangumi(optJSONObject("data"), optInt("code", FAIL_CODE), url)
                             )
                             put("code", 0)
                         }
@@ -256,40 +260,47 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                     instance.rxGeneralResponseClass?.isInstance(body) == true
                 ) {
                     val dataField =
-                        if (instance.generalResponseClass?.isInstance(body) == true) "data" else instance.responseDataField().value
+                        if (instance.generalResponseClass?.isInstance(body) == true) "data" else instance.responseDataField()
                     val data = body.getObjectField(dataField)
                     if (data?.javaClass == searchAllResultClass) {
                         addAreaTags(data)
                     }
                     url ?: return@hookBeforeAllConstructors
-                    if (data?.javaClass == bangumiSearchPageClass &&
-                        (url.startsWith("https://app.bilibili.com/x/v2/search/type") ||
-                                url.startsWith("https://appintl.biliapi.net/intl/gateway/app/search/type"))
+                    if (url.startsWith("https://app.bilibili.com/x/v2/search/type") || url.startsWith(
+                            "https://appintl.biliapi.net/intl/gateway/app/search/type"
+                        ) || url.startsWith("https://app.bilibili.com/x/intl/search/type")
                     ) {
                         val area = Uri.parse(url).getQueryParameter("type")?.toInt()
                         if (AREA_TYPES.containsKey(area)) {
-                            body.setObjectField(dataField,
-                                AREA_TYPES[area]?.let {
+                            if (data?.javaClass == bangumiSearchPageClass) {
+                                body.setObjectField(dataField, AREA_TYPES[area]?.let {
                                     retrieveAreaSearch(
-                                        data,
-                                        url,
-                                        it.area,
-                                        it.type
+                                        data, url, it.area, it.type
                                     )
                                 })
+                            } else if (data?.javaClass == biliSearchOgvResultClass) {
+                                body.setObjectField(dataField, AREA_TYPES[area]?.let {
+                                    retrieveAreaSearchV2(
+                                        data, url, it.area, it.type
+                                    )
+                                })
+                            }
                         }
                     } else if (url.startsWith("https://app.bilibili.com/x/v2/view?") ||
                         url.startsWith("https://app.bilibili.com/x/intl/view?") ||
                         url.startsWith("https://appintl.biliapi.net/intl/gateway/app/view?") &&
                         body.getIntField("code") == FAIL_CODE
                     ) {
-                        body.setObjectField(dataField, fixView(data, url))
-                        body.setIntField("code", 0)
+                        fixView(data, url)?.let {
+                            body.setObjectField(dataField, it)
+                            body.setIntField("code", 0)
+                        }
                     } else if (url.startsWith("https://app.bilibili.com/x/v2/space?")) {
-                        val mid = Uri.parse(url).getQueryParameter("vmid")
-                        mid?.let {
-                            USER_SPACES[it]?.run {
-                                body.setObjectField(dataField, fixSpace(data, mid, this))
+                        val code = body.getIntFieldOrNull("code")
+                        val mid = Uri.parse(url).getQueryParameter("vmid")?.toLongOrNull()
+                        if (code != 0 && sPrefs.getBoolean("fix_space", false)) {
+                            fixSpace(mid)?.let {
+                                body.setObjectField(dataField, it)
                                 body.setIntField("code", 0)
                             }
                         }
@@ -330,9 +341,11 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 false
             ) || sPrefs.getBoolean("search_area_movie", false))
         ) {
-            "com.bilibili.bangumi.ui.page.search.BangumiSearchResultFragment".findClassOrNull(
-                mClassLoader
-            )?.run {
+            val searchResultFragment =
+                "com.bilibili.bangumi.ui.page.search.BangumiSearchResultFragment".findClassOrNull(
+                    mClassLoader
+                ) ?: "com.bilibili.search.ogv.OgvSearchResultFragment".findClassOrNull(mClassLoader)
+            searchResultFragment?.run {
                 hookBeforeMethod(
                     "setUserVisibleCompat",
                     Boolean::class.javaPrimitiveType
@@ -384,14 +397,52 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         }
     }
 
-    private fun fixSpace(data: Any?, mid: String, name: String): Any? {
-        instance.biliSpaceClass ?: return data
-        if (data != null) return data
-        return instance.fastJsonClass?.callStaticMethod(
-            instance.fastJsonParse(),
-            """{"relation":-999,"guest_relation":-999,"default_tab":"video","is_params":true,"setting":{"fav_video":0,"coins_video":0,"likes_video":0,"bangumi":0,"played_game":0,"groups":0,"comic":0,"bbq":0,"dress_up":0,"disable_following":0,"live_playback":1,"close_space_medal":0,"only_show_wearing":0},"tab":{"archive":true,"article":false,"clip":false,"album":false,"favorite":false,"bangumi":false,"coin":false,"like":false,"community":false,"dynamic":true,"audios":false,"shop":false,"mall":false,"ugc_season":false,"comic":false,"cheese":false,"sub_comic":false,"activity":false,"series":false},"card":{"mid":"$mid","name":"哔哩漫游","approve":false,"sex":"保密","rank":"","face":"https://i0.hdslb.com/bfs/album/887ff772ba48558c82e21772f8a8d81cbf94ea1e.png","DisplayRank":"","regtime":0,"spacesta":0,"birthday":"","place":"","description":"该页面由哔哩漫游修复","article":0,"attentions":null,"fans":114,"friend":0,"attention":514,"sign":"该页面由哔哩漫游修复","level_info":{"current_level":6,"current_min":28800,"current_exp":28801,"next_exp":"--"},"pendant":{"pid":0,"name":"","image":"","expire":0,"image_enhance":"","image_enhance_frame":""},"nameplate":{"nid":0,"name":"","image":"","image_small":"","level":"","condition":""},"official_verify":{"type":1,"desc":"原 $name 官方账号","role":3,"title":"$name 官方账号"},"vip":{"vipType":0,"vipDueDate":0,"dueRemark":"","accessStatus":0,"vipStatus":0,"vipStatusWarn":"","themeType":0,"label":{"path":"","text":"","label_theme":"","text_color":"","bg_style":0,"bg_color":"","border_color":""}},"silence":0,"end_time":0,"silence_url":"","likes":{"like_num":233,"skr_tip":"视频、专栏、动态累计获赞"},"pr_info":{},"relation":{"status":1},"is_deleted":0,"honours":{"colour":{"dark":"#CE8620","normal":"#F0900B"},"tags":null},"profession":{}},"images":{"imgUrl":"https://i0.hdslb.com/bfs/album/16b6731618d911060e26f8fc95684c26bddc897c.jpg","night_imgurl":"https://i0.hdslb.com/bfs/album/ca79ebb2ebeee86c5634234c688b410661ea9623.png","has_garb":true,"goods_available":true},"live":{"roomStatus":0,"roundStatus":0,"liveStatus":0,"url":"","title":"","cover":"","online":0,"roomid":0,"broadcast_type":0,"online_hidden":0,"link":""},"archive":{"order":[{"title":"最新发布","value":"pubdate"},{"title":"最多播放","value":"click"}],"count":9999,"item":[]},"series":{"item":[]},"play_game":{"count":0,"item":[]},"article":{"count":0,"item":[],"lists_count":0,"lists":[]},"season":{"count":0,"item":[]},"coin_archive":{"count":0,"item":[]},"like_archive":{"count":0,"item":[]},"audios":{"count":0,"item":[]},"favourite2":{"count":0,"item":[]},"comic":{"count":0,"item":[]},"ugc_season":{"count":0,"item":[]},"cheese":{"count":0,"item":[]},"fans_effect":{},"tab2":[{"title":"动态","param":"dynamic"},{"title":"投稿","param":"contribute","items":[{"title":"视频","param":"video"}]}]}""",
-            instance.biliSpaceClass
-        ) ?: data
+    private fun fixSpace(mid: Long?): Any? {
+        mid ?: return null
+        instance.biliSpaceClass ?: return null
+        return getSpace(mid)?.let {
+            instance.fastJsonClass?.callStaticMethodOrNull(
+                instance.fastJsonParse(),
+                it,
+                instance.biliSpaceClass
+            )
+        }
+    }
+
+    private fun retrieveAreaSearchV2(data: Any?, url: String, area: String, type: String): Any? {
+        data ?: return data
+        if (sPrefs.getBoolean("hidden", false) && (sPrefs.getBoolean(
+                "search_area_bangumi", false
+            ) || sPrefs.getBoolean("search_area_movie", false))
+        ) {
+            val content = getAreaSearchBangumi(
+                URL(URLDecoder.decode(url, Charsets.UTF_8.name())).query, area, type
+            ) ?: return data
+            val jsonContent = content.toJSONObject()
+            checkErrorToast(jsonContent, true)
+            val newData = jsonContent.optJSONObject("data") ?: return data
+
+            val newItems = mutableListOf<Any>()
+            for (item in newData.getJSONArray("items")) {
+                // 去除追番按钮
+                if (item.optInt("Offset", -1) != -1) {
+                    item.remove("follow_button")
+                }
+                val goto = baseSearchItemClass?.getStaticObjectFieldAs<Map<String, Any>>("sMap")
+                    ?.get(item.optString("goto"))
+                instance.fastJsonClass?.callStaticMethod(
+                    instance.fastJsonParse(), item.toString(), goto?.callMethod("getImpl")
+                )?.let {
+                    it.setIntField("viewType", goto?.callMethodAs<String>("getLayout").hashCode())
+                    newItems.add(it)
+                }
+            }
+            return data.javaClass.new()
+                .setObjectField("items", newItems)
+                .setIntField("totalPages", newData.optInt("pages"))
+        } else {
+            return data
+        }
     }
 
     private fun retrieveAreaSearch(data: Any?, url: String, area: String, type: String): Any? {
@@ -465,7 +516,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
 
     private fun fixPlaySearchType(body: Any, url: String) {
         val dataField =
-            if (instance.generalResponseClass?.isInstance(body) == true) "data" else instance.responseDataField().value
+            if (instance.generalResponseClass?.isInstance(body) == true) "data" else instance.responseDataField()
         val resultClass = body.getObjectField(dataField)?.javaClass ?: return
         if (!url.contains("type=7") && !url.contains("type=8")) return
         val newUrl = url.replace("appintl.biliapi.net/intl/gateway/app/", "app.bilibili.com/x/v2/")
@@ -474,11 +525,21 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         body.setObjectField(dataField, newResult)
     }
 
-    private fun fixBangumi(jsonResult: JSONObject?, code: Int) =
+    private fun fixBangumi(jsonResult: JSONObject?, code: Int, url: String?) =
         if (isBangumiWithWatchPermission(jsonResult, code)) {
             jsonResult?.also { allowDownload(it); fixEpisodesStatus(it) }
         } else {
-            Log.toast("发现版权番剧，尝试解锁……")
+            url?.let { Uri.parse(it) }?.run {
+                getQueryParameter("ep_id")?.let {
+                    lastSeasonInfo.clear()
+                    lastSeasonInfo["ep_id"] = it
+                }
+                getQueryParameter("season_id")?.let {
+                    lastSeasonInfo.clear()
+                    lastSeasonInfo["season_id"] = it
+                }
+            }
+            Log.toast("发现区域限制番剧，尝试解锁……")
             Log.d("Info: $lastSeasonInfo")
             val (newCode, newJsonResult) = getSeason(
                 lastSeasonInfo,
@@ -536,7 +597,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         if (url?.contains("cards?") == true) return
         val jsonResult = result?.toJson()
         // Filter normal bangumi and other responses
-        fixBangumi(jsonResult, code)?.let {
+        fixBangumi(jsonResult, code, url)?.let {
             body.setIntField("code", 0)
                 .setObjectField(fieldName, instance.bangumiUniformSeasonClass?.fromJson(it))
         } ?: run {
@@ -545,8 +606,13 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
     }
 
     private fun fixViewProto(req: API.ViewReq): API.ViewReply? {
+        val av = when {
+            req.hasAid() -> req.aid.toString()
+            req.hasBvid() -> bv2av(req.bvid).toString()
+            else -> return null
+        }
         val query = Uri.Builder().run {
-            appendQueryParameter("id", req.aid.toString())
+            appendQueryParameter("id", av)
             appendQueryParameter("bvid", req.bvid.toString())
             appendQueryParameter("from", req.from.toString())
             appendQueryParameter("trackid", req.trackid.toString())
@@ -682,8 +748,13 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
     }
 
     private fun fixView(data: Any?, urlString: String): Any? {
-        var queryString = urlString.substring(urlString.indexOf("?") + 1)
-        queryString = queryString.replace("aid=", "id=")
+        val uri = Uri.parse(urlString)
+        val av = uri.getQueryParameter("aid")?.takeIf {
+            it != "0"
+        } ?: uri.getQueryParameter("bvid")?.let {
+            bv2av(it).toString()
+        } ?: return null
+        val queryString = uri.encodedQuery + "&id=$av"
         val content = BiliRoamingApi.getView(queryString) ?: return data
         val detailClass = instance.biliVideoDetailClass ?: return data
         val newJsonResult = content.toJSONObject().optJSONObject("v2_app_api") ?: return data
