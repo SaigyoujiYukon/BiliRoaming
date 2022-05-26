@@ -130,6 +130,7 @@
             android:title="@string/custom_link_title" />
 
         <SwitchPreference
+            android:defaultValue="true"
             android:key="fix_space"
             android:summary="@string/fix_space_summary"
             android:title="@string/fix_space_title" />
@@ -289,6 +290,26 @@
             android:key="block_upper_recommend_ad"
             android:summary="@string/block_video_ad_summary"
             android:title="@string/block_video_ad_title" />
+        <Preference
+            android:dependency="hidden"
+            android:key="customize_dynamic"
+            android:summary="@string/customize_dynamic_summary"
+            android:title="@string/customize_dynamic_title" />
+        <SwitchPreference
+            android:dependency="hidden"
+            android:key="remove_video_relate_promote"
+            android:summary="@string/remove_video_relate_promote_summary"
+            android:title="@string/remove_video_relate_promote_title" />
+        <SwitchPreference
+            android:dependency="remove_video_relate_promote"
+            android:key="remove_video_relate_only_av"
+            android:summary="@string/remove_video_relate_only_av_summary"
+            android:title="@string/remove_video_relate_only_av_title" />
+        <SwitchPreference
+            android:dependency="hidden"
+            android:key="remove_video_cmd_dms"
+            android:summary="@string/remove_video_cmd_dms_summary"
+            android:title="@string/remove_video_cmd_dms_title" />
     </PreferenceCategory>
 
     <PreferenceCategory

@@ -1,10 +1,14 @@
 package me.iacn.biliroaming.utils
 
+import android.annotation.SuppressLint
 import android.app.AndroidAppHelper
 import android.content.Context
 import android.content.pm.PackageManager.GET_META_DATA
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
 import androidx.documentfile.provider.DocumentFile
 import com.google.protobuf.GeneratedMessageLite
 import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
@@ -46,9 +50,9 @@ fun bv2av(bv: String): Long {
     "fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF".forEachIndexed { i, b ->
         table[b] = i
     }
-    val r = intArrayOf(11, 10, 3, 8, 4, 6).withIndex().map { (i, p) ->
+    val r = intArrayOf(11, 10, 3, 8, 4, 6).withIndex().sumOf { (i, p) ->
         table[bv[p]]!! * BigInteger.valueOf(58).pow(i).toLong()
-    }.sum()
+    }
     return (r - 8728348608).xor(177451812)
 }
 
@@ -244,3 +248,52 @@ fun GeneratedMessageLite<*, *>.print(indent: Int = 0): String {
     return sb.toString()
 }
 
+operator fun ViewGroup.iterator(): MutableIterator<View> = object : MutableIterator<View> {
+    private var index = 0
+    override fun hasNext() = index < childCount
+    override fun next() = getChildAt(index++) ?: throw IndexOutOfBoundsException()
+    override fun remove() = removeViewAt(--index)
+}
+
+val ViewGroup.children: Sequence<View>
+    get() = object : Sequence<View> {
+        override fun iterator() = this@children.iterator()
+    }
+
+fun View.addBackgroundRipple() = with(TypedValue()) {
+    context.theme.resolveAttribute(android.R.attr.selectableItemBackground, this, true)
+    setBackgroundResource(resourceId)
+}
+
+fun View.addBackgroundCircleRipple() = with(TypedValue()) {
+    context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, this, true)
+    setBackgroundResource(resourceId)
+}
+
+@SuppressLint("ApplySharedPref")
+fun migrateHomeFilterPrefsIfNeeded() {
+    if (!sPrefs.getBoolean("home_filter_prefs_migrated", false)) {
+        val titleList = sPrefs.getString("keywords_filter_title_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+        val reasonList = sPrefs.getString("keywords_filter_reason_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+        val uidList = sPrefs.getString("keywords_filter_uid_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+        val upList = sPrefs.getString("keywords_filter_upname_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+        val categoryList = sPrefs.getString("keywords_filter_rname_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+        val channelList = sPrefs.getString("keywords_filter_tname_recommend_list", null)
+            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+
+        sPrefs.edit().apply {
+            putStringSet("home_filter_keywords_title", titleList)
+            putStringSet("home_filter_keywords_reason", reasonList)
+            putStringSet("home_filter_keywords_uid", uidList)
+            putStringSet("home_filter_keywords_up", upList)
+            putStringSet("home_filter_keywords_category", categoryList)
+            putStringSet("home_filter_keywords_channel", channelList)
+            putBoolean("home_filter_prefs_migrated", true)
+        }.commit()
+    }
+}

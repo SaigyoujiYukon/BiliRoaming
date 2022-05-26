@@ -5,6 +5,7 @@ package me.iacn.biliroaming
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.SharedPreferences
+import android.graphics.Color
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.TypedValue
@@ -13,15 +14,15 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.*
+import me.iacn.biliroaming.XposedInit.Companion.moduleRes
 import me.iacn.biliroaming.utils.Log
+import me.iacn.biliroaming.utils.addBackgroundRipple
 import me.iacn.biliroaming.utils.children
-import me.iacn.biliroaming.utils.migrateHomeFilterPrefsIfNeeded
 import kotlin.math.roundToInt
 
-class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
+class DynamicFilterDialog(val activity: Activity, prefs: SharedPreferences) :
     AlertDialog.Builder(activity) {
     init {
-        migrateHomeFilterPrefsIfNeeded()
         val scrollView = ScrollView(context).apply {
             scrollBarStyle = ScrollView.SCROLLBARS_OUTSIDE_OVERLAY
         }
@@ -34,87 +35,107 @@ class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
         }
         scrollView.addView(root)
 
-        root.addView(TextView(context).apply {
-            text = string(R.string.hide_low_play_count_recommend_summary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18F)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        })
-        val lowPlayCountInput = textInputItem(string(R.string.hide_low_play_count_recommend_title))
-            .let {
-                root.addView(it.first)
-                it.second
-            }
-        prefs.getLong("hide_low_play_count_recommend_limit", 0).takeIf { it > 0 }
-            ?.let { lowPlayCountInput.setText(it.toString()) }
+        val rmTopicOfAllTitle = string(R.string.customize_dynamic_all_rm_topic_title)
+        val rmTopicOfAllSwitch = switchPrefsItem(rmTopicOfAllTitle).let {
+            root.addView(it.first)
+            it.second
+        }
+        rmTopicOfAllSwitch.isChecked = prefs.getBoolean("customize_dynamic_all_rm_topic", false)
 
-        root.addView(TextView(context).apply {
-            text = string(R.string.hide_duration_recommend_summary)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18F)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        })
-        val shortDurationInput = textInputItem(string(R.string.hide_short_duration_recommend_title))
-            .let {
-                root.addView(it.first)
-                it.second
-            }
-        val longDurationInput = textInputItem(string(R.string.hide_long_duration_recommend_title))
-            .let {
-                root.addView(it.first)
-                it.second
-            }
-        prefs.getInt("hide_short_duration_recommend_limit", 0).takeIf { it > 0 }
-            ?.let { shortDurationInput.setText(it.toString()) }
-        prefs.getInt("hide_long_duration_recommend_limit", 0).takeIf { it > 0 }
-            ?.let { longDurationInput.setText(it.toString()) }
+        val rmUpOfAllTitle = string(R.string.customize_dynamic_all_rm_up_title)
+        val rmUpOfAllSwitch = switchPrefsItem(rmUpOfAllTitle).let {
+            root.addView(it.first)
+            it.second
+        }
+        rmUpOfAllSwitch.isChecked = prefs.getBoolean("customize_dynamic_all_rm_up", false)
 
-        root.addView(TextView(context).apply {
-            text = string(R.string.keywords_filter_recommend_summary)
+        val rmUpOfVideoTitle = string(R.string.customize_dynamic_video_rm_up_title)
+        val rmUpOfVideoSwitch = switchPrefsItem(rmUpOfVideoTitle).let {
+            root.addView(it.first)
+            it.second
+        }
+        rmUpOfVideoSwitch.isChecked = prefs.getBoolean("customize_dynamic_video_rm_up", false)
+
+        val byTypeTitle = TextView(context).apply {
+            text = string(R.string.customize_dynamic_by_type)
+            typeface = Typeface.DEFAULT_BOLD
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18F)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 10.dp
+            }
+        }
+        root.addView(byTypeTitle)
+
+        val gridLayout = GridLayout(context).apply {
+            columnCount = 4
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-        })
-        val titleGroup = root.addKeywordGroup(string(R.string.keyword_group_name_title))
-        val reasonGroup = root.addKeywordGroup(string(R.string.keyword_group_name_rcmd_reason))
+        }
+        root.addView(gridLayout)
+        val dynamicTypes = moduleRes.getStringArray(R.array.dynamic_entries).zip(
+            moduleRes.getStringArray(R.array.dynamic_values)
+        )
+        val colSpec = fun(colWeight: Float) = GridLayout.spec(GridLayout.UNDEFINED, colWeight)
+        val rowSpec = { GridLayout.spec(GridLayout.UNDEFINED) }
+        val typePrefs = prefs.getStringSet("customize_dynamic_type", null) ?: setOf()
+        dynamicTypes.forEach { item ->
+            val checkBox = CheckBox(context).apply {
+                tag = item.second
+                layoutParams = GridLayout.LayoutParams(rowSpec(), colSpec(1F))
+                isChecked = typePrefs.contains(item.second)
+            }
+            val textView = TextView(context).apply {
+                text = item.first
+                layoutParams = GridLayout.LayoutParams(rowSpec(), colSpec(2F))
+                setSingleLine()
+            }
+            gridLayout.addView(checkBox)
+            gridLayout.addView(textView)
+        }
+
+        val byKeywordTitle = TextView(context).apply {
+            text = string(R.string.customize_dynamic_by_keyword)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18F)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 10.dp
+            }
+        }
+        root.addView(byKeywordTitle)
+
+        val contentGroup = root.addKeywordGroup(string(R.string.keyword_group_name_content))
+        val upNameGroup = root.addKeywordGroup(string(R.string.keyword_group_name_up))
         val uidGroup = root.addKeywordGroup(
             string(R.string.keyword_group_name_uid),
             EditorInfo.TYPE_CLASS_NUMBER
         )
-        val upGroup = root.addKeywordGroup(string(R.string.keyword_group_name_up))
-        val categoryGroup = root.addKeywordGroup(string(R.string.keyword_group_name_category))
-        val channelGroup = root.addKeywordGroup(string(R.string.keyword_group_name_channel))
-        prefs.getStringSet("home_filter_keywords_title", null)?.forEach {
-            titleGroup.addView(keywordInputItem(titleGroup, it).first)
+        prefs.getStringSet("customize_dynamic_keyword_content", null)?.forEach {
+            contentGroup.addView(keywordInputItem(contentGroup, it).first)
         }
-        prefs.getStringSet("home_filter_keywords_reason", null)?.forEach {
-            reasonGroup.addView(keywordInputItem(reasonGroup, it).first)
+        prefs.getStringSet("customize_dynamic_keyword_upname", null)?.forEach {
+            upNameGroup.addView(keywordInputItem(upNameGroup, it).first)
         }
-        prefs.getStringSet("home_filter_keywords_uid", null)?.forEach {
+        prefs.getStringSet("customize_dynamic_keyword_uid", null)?.forEach {
             uidGroup.addView(keywordInputItem(uidGroup, it, EditorInfo.TYPE_CLASS_NUMBER).first)
         }
-        prefs.getStringSet("home_filter_keywords_up", null)?.forEach {
-            upGroup.addView(keywordInputItem(upGroup, it).first)
-        }
-        prefs.getStringSet("home_filter_keywords_category", null)?.forEach {
-            categoryGroup.addView(keywordInputItem(categoryGroup, it).first)
-        }
-        prefs.getStringSet("home_filter_keywords_channel", null)?.forEach {
-            channelGroup.addView(keywordInputItem(channelGroup, it).first)
-        }
 
-        setTitle(string(R.string.home_filter_title))
+        setTitle(string(R.string.customize_dynamic_title))
 
         setPositiveButton(android.R.string.ok) { _, _ ->
-            val lowPlayCount = lowPlayCountInput.text.toString().toLongOrNull() ?: 0
-            val shortDuration = shortDurationInput.text.toString().toIntOrNull() ?: 0
-            val longDuration = longDurationInput.text.toString().toIntOrNull() ?: 0
+            val typeValues = buildSet {
+                for (i in 0 until gridLayout.childCount step 2) {
+                    val view = gridLayout.getChildAt(i) as CheckBox
+                    if (view.isChecked) add(view.tag.toString())
+                }
+            }
 
             fun getKeywords(viewGroup: ViewGroup) = viewGroup.children
                 .filterIsInstance<ViewGroup>()
@@ -125,17 +146,14 @@ class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
                 .toSet()
 
             prefs.edit().apply {
-                putLong("hide_low_play_count_recommend_limit", lowPlayCount)
-                putInt("hide_short_duration_recommend_limit", shortDuration)
-                putInt("hide_long_duration_recommend_limit", longDuration)
-                putStringSet("home_filter_keywords_title", getKeywords(titleGroup))
-                putStringSet("home_filter_keywords_reason", getKeywords(reasonGroup))
-                putStringSet("home_filter_keywords_uid", getKeywords(uidGroup))
-                putStringSet("home_filter_keywords_up", getKeywords(upGroup))
-                putStringSet("home_filter_keywords_category", getKeywords(categoryGroup))
-                putStringSet("home_filter_keywords_channel", getKeywords(channelGroup))
+                putBoolean("customize_dynamic_all_rm_topic", rmTopicOfAllSwitch.isChecked)
+                putBoolean("customize_dynamic_all_rm_up", rmUpOfAllSwitch.isChecked)
+                putBoolean("customize_dynamic_video_rm_up", rmUpOfVideoSwitch.isChecked)
+                putStringSet("customize_dynamic_type", typeValues)
+                putStringSet("customize_dynamic_keyword_content", getKeywords(contentGroup))
+                putStringSet("customize_dynamic_keyword_upname", getKeywords(upNameGroup))
+                putStringSet("customize_dynamic_keyword_uid", getKeywords(uidGroup))
             }.apply()
-
             Log.toast(string(R.string.prefs_save_success_and_reboot))
         }
         setNegativeButton(android.R.string.cancel, null)
@@ -152,39 +170,7 @@ class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
             context.resources.displayMetrics
         ).roundToInt()
 
-    private inline fun string(resId: Int) = XposedInit.moduleRes.getString(resId)
-
-    private fun textInputItem(
-        name: String,
-        type: Int = EditorInfo.TYPE_CLASS_NUMBER
-    ): Pair<LinearLayout, EditText> {
-        val layout = LinearLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val textView = TextView(context).apply {
-            text = name
-            setSingleLine()
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val editText = EditText(context).apply {
-            setSingleLine()
-            inputType = type
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { weight = 1F }
-        }
-        layout.addView(textView)
-        layout.addView(editText)
-        return Pair(layout, editText)
-    }
+    private inline fun string(resId: Int) = moduleRes.getString(resId)
 
     private fun keywordTypeHeader(
         group: ViewGroup,
@@ -207,7 +193,7 @@ class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            minWidth = 64.dp
+            minWidth = 40.dp
         }
         val addView = Button(context).apply {
             text = string(R.string.keyword_group_add)
@@ -266,6 +252,46 @@ class HomeFilterDialog(val activity: Activity, prefs: SharedPreferences) :
         layout.addView(editText)
         layout.addView(button)
         return Pair(layout, editText)
+    }
+
+    private fun switchPrefsItem(title: String): Pair<LinearLayout, Switch> {
+        val layout = LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val titleView = TextView(context).apply {
+            text = title
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16F)
+            setSingleLine()
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, 8.dp, 0, 8.dp)
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                weight = 1F
+                marginEnd = 10.dp
+            }
+        }
+        val switcher = Switch(context).apply {
+            isClickable = false
+            isSoundEffectsEnabled = false
+            isHapticFeedbackEnabled = false
+            setBackgroundColor(Color.TRANSPARENT)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        layout.setOnClickListener { switcher.toggle() }
+        layout.addBackgroundRipple()
+        layout.addView(titleView)
+        layout.addView(switcher)
+        return Pair(layout, switcher)
     }
 
     private fun LinearLayout.addKeywordGroup(
