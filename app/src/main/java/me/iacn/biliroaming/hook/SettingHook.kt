@@ -30,6 +30,18 @@ class SettingHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
         }
 
+        // 阻止重建 PrefsFragment，因为系统恢复状态时用的 MainActivity 的 Classloader
+        // 并没有加载 PrefsFragment 类，当 Configuration 改变等情况下，需要恢复状态
+        // 并实例化 PrefsFragment 时，会因为类找不到而触发 android.app.Fragment$InstantiationException
+        // 这里不影响 APP 的 Fragment 重建，因为 APP 没有用原生的 Fragment，非原生的状态另外的字段保存的
+        instance.mainActivityClass?.hookBeforeMethod(
+            "onCreate",
+            Bundle::class.java
+        ) { param ->
+            val bundle = param.args[0] as? Bundle
+            bundle?.remove("android:fragments")
+        }
+
         instance.drawerClass?.hookAfterMethod(
             "onCreateView",
             LayoutInflater::class.java,
@@ -49,13 +61,16 @@ class SettingHook(classLoader: ClassLoader) : BaseHook(classLoader) {
 
         instance.homeCenters().forEach { (c, m) ->
             c?.hookBeforeAllMethods(m) { param ->
-                val lastGroup = (param.args[1] as MutableList<*>).lastOrNull()
+                @Suppress("UNCHECKED_CAST")
+                val list = param.args[1] as? MutableList<Any>
+                    ?: param.args[1]?.getObjectFieldOrNullAs<MutableList<Any>>("moreSectionList")
                     ?: return@hookBeforeAllMethods
 
-                val itemList =
-                    if (lastGroup.javaClass != instance.menuGroupItemClass) lastGroup.getObjectFieldAs<MutableList<Any>?>(
+                val itemList = list.lastOrNull()?.let {
+                    if (it.javaClass != instance.menuGroupItemClass) it.getObjectFieldOrNullAs<MutableList<Any>>(
                         "itemList"
-                    ) else param.args[1] as MutableList<Any>
+                    ) else list
+                } ?: list
 
                 val item = instance.menuGroupItemClass?.new() ?: return@hookBeforeAllMethods
                 item.setIntField("id", SETTING_ID)
@@ -65,8 +80,8 @@ class SettingHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                         "https://i0.hdslb.com/bfs/album/276769577d2a5db1d9f914364abad7c5253086f6.png"
                     )
                     .setObjectField("uri", SETTING_URI)
-
-                itemList?.forEach {
+                    .setIntField("visible", 1)
+                itemList.forEach {
                     if (try {
                             it.getIntField("id") == SETTING_ID
                         } catch (t: Throwable) {
@@ -74,7 +89,7 @@ class SettingHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                         }
                     ) return@hookBeforeAllMethods
                 }
-                itemList?.add(item)
+                itemList.add(item)
             }
         }
 
