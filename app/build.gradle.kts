@@ -5,15 +5,6 @@ import com.google.protobuf.gradle.*
 import java.nio.file.Paths
 import org.gradle.internal.os.OperatingSystem
 
-// https://github.com/google/protobuf-gradle-plugin/issues/540#issuecomment-1001053066
-fun com.android.build.api.dsl.AndroidSourceSet.proto(action: SourceDirectorySet.() -> Unit) {
-    (this as? ExtensionAware)
-        ?.extensions
-        ?.getByName("proto")
-        ?.let { it as? SourceDirectorySet }
-        ?.apply(action)
-}
-
 fun findInPath(executable: String): String? {
     val pathEnv = System.getenv("PATH")
     return pathEnv.split(File.pathSeparator).map { folder ->
@@ -35,19 +26,22 @@ val releaseStorePassword: String? by rootProject
 val releaseKeyAlias: String? by rootProject
 val releaseKeyPassword: String? by rootProject
 
-val appVerCode: String by rootProject
+val appVerCode: Int by rootProject
 val appVerName: String by rootProject
+
+val kotlinVersion: String by rootProject
+val protobufVersion: String by rootProject
 
 android {
     compileSdk = 33
-    buildToolsVersion = "33.0.0"
-    ndkVersion = "25.0.8775105"
+    buildToolsVersion = "33.0.1"
+    ndkVersion = "25.1.8937393"
 
     defaultConfig {
         applicationId = "me.iacn.biliroaming"
         minSdk = 24
         targetSdk = 33  // Target Android T
-        versionCode = appVerCode.toInt()
+        versionCode = appVerCode
         versionName = appVerName
 
         externalNativeBuild {
@@ -68,6 +62,7 @@ android {
                     "-fomit-frame-pointer",
                     "-Wno-builtin-macro-redefined",
                     "-Wno-unused-value",
+                    "-Wno-c++2b-extensions",
                     "-D__FILE__=__FILE_NAME__",
                 )
                 cppFlags("-std=c++20", *flags)
@@ -204,7 +199,7 @@ android {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.21.2"
+        artifact = "com.google.protobuf:protoc:$protobufVersion"
     }
 
     generatedFilesBaseDir = "$projectDir/src/generated"
@@ -263,11 +258,11 @@ configurations.all {
 
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
-    implementation("com.google.protobuf:protobuf-kotlin-lite:3.21.2")
-    compileOnly("com.google.protobuf:protoc:3.21.2")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:${rootProject.extra["kotlinVersion"]}")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.6.3")
+    implementation("com.google.protobuf:protobuf-kotlin-lite:$protobufVersion")
+    compileOnly("com.google.protobuf:protoc:$protobufVersion")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.6.4")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("dev.rikka.ndk.thirdparty:cxx:1.2.0")
 }

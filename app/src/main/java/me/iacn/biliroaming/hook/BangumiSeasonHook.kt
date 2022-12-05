@@ -13,6 +13,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import kotlinx.coroutines.*
 import me.iacn.biliroaming.*
+import me.iacn.biliroaming.API.*
 import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
 import me.iacn.biliroaming.Constant.TYPE_EPISODE_ID
 import me.iacn.biliroaming.Constant.TYPE_SEASON_ID
@@ -25,6 +26,7 @@ import me.iacn.biliroaming.utils.*
 import org.json.JSONObject
 import java.io.InputStream
 import java.lang.reflect.Method
+import java.lang.reflect.Proxy
 import java.net.URL
 import java.net.URLDecoder
 import java.util.*
@@ -160,6 +162,9 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         )
     }
 
+    private val navClass by Weak { "com.bapis.bilibili.polymer.app.search.v1.Nav" from mClassLoader }
+    private val searchByTypeRespClass by Weak { "com.bapis.bilibili.polymer.app.search.v1.SearchByTypeResponse" from mClassLoader }
+
     @SuppressLint("SetTextI18n")
     override fun startHook() {
         if (!sPrefs.getBoolean("main_func", false)) return
@@ -176,30 +181,34 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             updateSeasonInfo(param.args, paramMap)
         }
 
-        "com.bilibili.bangumi.ui.page.detail.BangumiCommentInvalidFragmentV2".hookAfterMethod(
-            mClassLoader,
-            "onViewCreated",
-            View::class.java,
-            Bundle::class.java
-        ) { param ->
-            if (lastSeasonInfo["allow_comment"] != "0" ||
-                sPrefs.getBoolean("force_th_comment", false)
-            ) return@hookAfterMethod
-            (param.args[0] as? View)?.run {
-                findViewById<TextView>(getId("info"))?.text = "由于泰区番剧评论会串到其他正常视频中，\n因而禁用泰区评论，还望理解。"
-                findViewById<ImageView>(getId("forbid_icon"))?.run {
+        val invalidTipsHook: Hooker = { param ->
+            val view = param.args[0]?.let {
+                if (it is View) it else it.callMethod("getView") as View?
+            }
+            if (lastSeasonInfo["allow_comment"] == "0" &&
+                !sPrefs.getBoolean("force_th_comment", false)
+            ) {
+                view?.findViewById<TextView>(getId("info"))?.text =
+                    "由于泰区番剧评论会串到其他正常视频中，\n因而禁用泰区评论，还望理解。"
+                view?.findViewById<ImageView>(getId("forbid_icon"))?.run {
                     MainScope().launch {
-                        @Suppress("BlockingMethodInNonBlockingContext") val bitmap =
-                            withContext(Dispatchers.IO) {
-                                val connection =
-                                    URL("https://i0.hdslb.com/bfs/album/08d5ce2fef8da8adf91024db4a69919b8d02fd5c.png").openConnection()
-                                connection.connect()
-                                val input: InputStream = connection.getInputStream()
-                                BitmapFactory.decodeStream(input)
-                            }
-                        setImageBitmap(bitmap)
+                        withContext(Dispatchers.IO) {
+                            URL("https://i0.hdslb.com/bfs/album/08d5ce2fef8da8adf91024db4a69919b8d02fd5c.png")
+                                .openStream().let { BitmapFactory.decodeStream(it) }
+                        }.let { setImageBitmap(it) }
                     }
                 }
+            }
+        }
+        instance.commentInvalidFragmentClass?.run {
+            hookAfterMethod(
+                "onViewCreated",
+                View::class.java,
+                Bundle::class.java,
+                hooker = invalidTipsHook
+            )
+            instance.setInvalidTips()?.let {
+                hookAfterMethod(it, this, "kotlin.Pair", hooker = invalidTipsHook)
             }
         }
 
@@ -219,7 +228,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             Log.toast("Android O以下系统不支持64位Xpatch版，请使用32位版")
         } else {
             instance.retrofitResponseClass?.hookBeforeAllConstructors { param ->
-                val url = getUrl(param.args[0])
+                val url = getRetrofitUrl(param.args[0])
                 val body = param.args[1] ?: return@hookBeforeAllConstructors
                 if (url?.startsWith("https://api.bilibili.com/pgc/view/v2/app/season") == true &&
                     body.javaClass == instance.okioWrapperClass
@@ -315,7 +324,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             ?.hookAfterMethod("view", "com.bapis.bilibili.app.view.v1.ViewReq") { param ->
                 param.result?.let { return@hookAfterMethod }
                 val serializedRequest = param.args[0].callMethodAs<ByteArray>("toByteArray")
-                val req = API.ViewReq.parseFrom(serializedRequest)
+                val req = ViewReq.parseFrom(serializedRequest)
                 val reply = fixViewProto(req)
                 val serializedReply = reply?.toByteArray() ?: return@hookAfterMethod
                 param.result = (param.method as Method).returnType.callStaticMethod(
@@ -403,6 +412,240 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
             pageTypesClass.setStaticObjectField("\$VALUES", newPageArray)
         }
+        if (sPrefs.getBoolean("hidden", false) &&
+            (sPrefs.getBoolean("search_area_bangumi", false)
+                    || sPrefs.getBoolean("search_area_movie", false))
+        ) {
+            val mossResponseHandlerClass = instance.mossResponseHandlerClass ?: return
+            val searchMossClass =
+                "com.bapis.bilibili.polymer.app.search.v1.SearchMoss".from(mClassLoader) ?: return
+            searchMossClass.hookBeforeMethod(
+                "searchAll",
+                "com.bapis.bilibili.polymer.app.search.v1.SearchAllRequest",
+                mossResponseHandlerClass
+            ) { param ->
+                val handler = param.args[1]
+                param.args[1] = Proxy.newProxyInstance(
+                    handler.javaClass.classLoader,
+                    arrayOf(mossResponseHandlerClass)
+                ) { _, m, args ->
+                    if (m.name == "onNext") {
+                        addAreaTagsV2(args[0])
+                        m(handler, *args)
+                    } else if (args == null) {
+                        m(handler)
+                    } else {
+                        m(handler, *args)
+                    }
+                }
+            }
+            searchMossClass.hookBeforeMethod(
+                "searchByType",
+                "com.bapis.bilibili.polymer.app.search.v1.SearchByTypeRequest",
+                mossResponseHandlerClass
+            ) { param ->
+                val searchByTypeRespClass = searchByTypeRespClass ?: return@hookBeforeMethod
+                val key =
+                    param.args[0].callMethodOrNullAs<Int>("getType") ?: return@hookBeforeMethod
+                val areaType = AREA_TYPES[key] ?: return@hookBeforeMethod
+                val request = SearchByTypeRequest.parseFrom(
+                    param.args[0].callMethodAs<ByteArray>("toByteArray")
+                )
+                val type = areaType.type
+                val area = areaType.area
+                val handler = param.args[1]
+                MainScope().launch(Dispatchers.IO) {
+                    val result = retrieveAreaSearchV3(request, area, type)
+                    if (result != null) {
+                        val newRes = searchByTypeRespClass
+                            .callStaticMethod("parseFrom", result.toByteArray())
+                        handler.callMethod("onNext", newRes)
+                        handler.callMethod("onCompleted")
+                    } else {
+                        handler.callMethod("onError", null)
+                    }
+                }
+                param.result = null
+            }
+        }
+    }
+
+    private fun addAreaTagsV2(v: Any?) {
+        v ?: return
+        val navClass = navClass ?: return
+        val navList = v.callMethodAs<List<Any>>("getNavList")
+            .map { SearchNav.parseFrom(it.callMethodAs<ByteArray>("toByteArray")) }
+            .toMutableList()
+        val currentArea = runCatching {
+            XposedInit.country.get(5L, TimeUnit.SECONDS)
+        }.getOrNull()
+        for (area in AREA_TYPES) {
+            if (area.value.area == currentArea)
+                continue
+            if (!sPrefs.getString(area.value.area + "_server", null).isNullOrBlank() &&
+                sPrefs.getBoolean("search_area_" + area.value.type_str, false)
+            ) {
+                val nav = searchNav {
+                    name = area.value.text
+                    total = 0
+                    pages = 0
+                    type = area.key
+                }
+                navList.add(1, nav)
+            }
+        }
+        v.callMethod("clearNav")
+        val newNavList = navList.map {
+            navClass.callStaticMethod("parseFrom", it.toByteArray())
+        }
+        v.callMethod("addAllNav", newNavList)
+    }
+
+    private fun retrieveAreaSearchV3(
+        request: SearchByTypeRequest,
+        area: String,
+        type: String
+    ): SearchByTypeResponse? {
+        val pn = request.pagination.next.ifEmpty { "1" }
+        val ps = request.pagination.pageSize
+        val keyword = request.keyword
+        val query = mapOf(
+            "access_key" to (instance.accessKey ?: ""),
+            "fnval" to request.playerArgs.fnval,
+            "fnver" to request.playerArgs.fnver,
+            "qn" to request.playerArgs.qn,
+            "pn" to pn,
+            "ps" to ps,
+            "keyword" to keyword,
+        ).map { "${it.key}=${it.value}" }.joinToString("&")
+        val jsonContent = getAreaSearchBangumi(query, area, type)?.toJSONObject()
+            ?: return null
+        checkErrorToast(jsonContent, true)
+        val newData = jsonContent.optJSONObject("data") ?: return null
+
+        fun ReasonStyleKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            text = optString("text")
+            textColor = optString("text_color")
+            textColorNight = optString("text_color_night")
+            bgColor = optString("bg_color")
+            bgColorNight = optString("bg_color_night")
+            borderColor = optString("border_color")
+            borderColorNight = optString("border_color_night")
+            bgStyle = optInt("bg_style")
+        }
+
+        fun EpisodeKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            uri = optString("uri")
+            param = optString("param")
+            index = optString("index")
+            for (badge in optJSONArray("badges").orEmpty())
+                badges += reasonStyle { reconstructFrom(badge) }
+            position = optInt("position")
+        }
+
+        fun EpisodeNewKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            title = optString("title")
+            uri = optString("uri")
+            param = optString("param")
+            isNew = optInt("is_new")
+            for (badge in optJSONArray("badges").orEmpty())
+                badges += reasonStyle { reconstructFrom(badge) }
+            this@reconstructFrom.type = optInt("type")
+            position = optInt("position")
+            cover = optString("cover")
+            label = optString("label")
+        }
+
+        fun WatchButtonKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            title = optString("title")
+            link = optString("link")
+        }
+
+        fun CheckMoreKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            content = optString("content")
+            uri = optString("uri")
+        }
+
+        fun FollowButtonKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            icon = optString("icon")
+            optJSONObject("texts")?.let { o ->
+                o.keys().asSequence().associateWith { o.opt(it)?.toString() ?: "" }
+            }?.let { texts.putAll(it) }
+            statusReport = optString("status_report")
+        }
+
+        fun SearchBangumiCardKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            title = optString("title")
+            cover = optString("cover")
+            mediaType = optInt("media_type")
+            playState = optInt("play_state")
+            this@reconstructFrom.area = optString("area")
+            style = optString("style")
+            styles = optString("styles")
+            cv = optString("cv")
+            rating = optDouble("rating")
+            vote = optInt("vote")
+            target = optString("target")
+            staff = optString("staff")
+            prompt = optString("prompt")
+            ptime = optLong("ptime")
+            seasonTypeName = optString("season_type_name")
+            for (episode in optJSONArray("episodes").orEmpty())
+                episodes += episode { reconstructFrom(episode) }
+            isSelection = optInt("is_selection")
+            isAtten = optInt("is_atten")
+            label = optString("label")
+            seasonId = optLong("season_id")
+            outName = optString("out_name")
+            outIcon = optString("out_icon")
+            outUrl = optString("out_url")
+            for (badge in optJSONArray("badges").orEmpty())
+                badges += reasonStyle { reconstructFrom(badge) }
+            isOut = optInt("is_out")
+            for (episodeNew in optJSONArray("episodes_new").orEmpty())
+                episodesNew += episodeNew { reconstructFrom(episodeNew) }
+            optJSONObject("watch_button")?.let {
+                watchButton = watchButton { reconstructFrom(it) }
+            }
+            selectionStyle = optString("selection_style")
+            optJSONObject("check_more")?.let {
+                checkMore = checkMore { reconstructFrom(it) }
+            }
+            optJSONObject("follow_button")?.let {
+                followButton = followButton { reconstructFrom(it) }
+            }
+            optJSONObject("style_label")?.let {
+                styleLabel = reasonStyle { reconstructFrom(it) }
+            }
+            for (badgeV2 in optJSONArray("badges_v2").orEmpty())
+                badgesV2 += reasonStyle { reconstructFrom(badgeV2) }
+            stylesV2 = optString("styles_v2")
+        }
+
+        fun SearchItemKt.Dsl.reconstructFrom(json: JSONObject) = json.run {
+            uri = optString("uri")
+            param = optString("param")
+            goto = optString("goto")
+            linkType = optString("link_type")
+            position = optInt("position")
+            trackId = optString("track_id")
+            bangumi = searchBangumiCard { reconstructFrom(json) }
+        }
+
+        val pages = newData.optInt("pages")
+        var page = pn.toIntOrNull() ?: 1
+        val response = searchByTypeResponse {
+            this.pages = pages
+            this.keyword = keyword
+            for (json in newData.optJSONArray("items").orEmpty()) {
+                if (json.optInt("Offset", -1) != -1)
+                    json.remove("follow_button")
+                items += searchItem { reconstructFrom(json) }
+            }
+            if (page < pages)
+                pagination = paginationReply { next = (++page).toString() }
+        }
+        return response
     }
 
     private fun fixSpace(mid: Long?): Any? {
@@ -431,7 +674,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             val newData = jsonContent.optJSONObject("data") ?: return data
 
             val newItems = mutableListOf<Any>()
-            for (item in newData.getJSONArray("items")) {
+            for (item in newData.optJSONArray("items").orEmpty()) {
                 // 去除追番按钮
                 if (item.optInt("Offset", -1) != -1) {
                     item.remove("follow_button")
@@ -473,7 +716,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             val newData = jsonContent.optJSONObject("data") ?: return data
 
             // 去除追番按钮
-            for (item in newData.getJSONArray("items")) {
+            for (item in newData.optJSONArray("items").orEmpty()) {
                 if (item.optInt("Offset", -1) != -1) {
                     item.remove("follow_button")
                 }
@@ -497,15 +740,12 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 false
             ) || sPrefs.getBoolean("search_area_movie", false))
         ) {
+            val currentArea = runCatching {
+                XposedInit.country.get(5L, TimeUnit.SECONDS)
+            }.getOrNull()
             for (area in AREA_TYPES) {
-                if (runCatching {
-                        XposedInit.country.get(
-                            5L,
-                            TimeUnit.SECONDS
-                        )
-                    }.getOrNull() == area.value.area) {
+                if (area.value.area == currentArea)
                     continue
-                }
                 if (!sPrefs.getString(area.value.area + "_server", null).isNullOrBlank() &&
                     sPrefs.getBoolean("search_area_" + area.value.type_str, false)
                 ) {
@@ -613,7 +853,7 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         }
     }
 
-    private fun fixViewProto(req: API.ViewReq): API.ViewReply? {
+    private fun fixViewProto(req: ViewReq): ViewReply? {
         val av = when {
             req.hasAid() -> req.aid.toString()
             req.hasBvid() -> bv2av(req.bvid).toString()
@@ -635,9 +875,12 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             build()
         }.query
 
+        BiliRoamingApi.getPagelist(av) ?: return null
+
+        Log.toast("发现区域限制视频，尝试解锁……")
+
         val content = BiliRoamingApi.getView(query)?.toJSONObject() ?: return null
-        val result = content.optJSONObject("v2_app_api")
-        if (result?.has("season") != true) return null
+        val result = content.optJSONObject("v2_app_api") ?: return null
 
         return viewReply {
             arc = arc {
@@ -687,23 +930,23 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                     typeName = optString("tname")
                     videos = optLong("videos")
                 }
-            }
-            bvid = result.optString("bvid")
-            season = season {
-                result.optJSONObject("season")?.run {
-                    allowDownload = "1"
-                    seasonId = optString("season_id").toLong()
-                    title = optString("title")
-                    cover = optString("cover")
-                    isFinish = optString("is_finish").toInt()
-                    newestEpIndex = optString("newest_ep_index")
-                    newestEpid = optString("newest_ep_id").toInt()
-                    totalCount = optString("total_count").toLong()
-                    weekday = optString("weekday").toInt()
-                    ovgPlayurl = optString("ogv_play_url")
-                    isJump = optInt("is_jump")
+                rights = rights {
+                    result.optJSONObject("rights")?.run {
+                        bp = optInt("bp")
+                        elec = optInt("elec")
+                        download = if (sPrefs.getBoolean("allow_download", false)) 1 else optInt("download")
+                        movie = optInt("movie")
+                        pay = optInt("pay")
+                        hd5 = optInt("hd5")
+                        noReprint = optInt("no_reprint")
+                        autoplay = optInt("autoplay")
+                        isCooperation = optInt("is_cooperation")
+                        ugcPay = optInt("ugc_pay")
+                        noBackground = if (sPrefs.getBoolean("play_arc_conf", false)) 0 else optInt("no_background")
+                    }
                 }
             }
+            bvid = result.optString("bvid")
             val pages = result.optJSONArray("pages")
             for (page in pages.orEmpty()) {
                 this.pages += viewPage {
@@ -750,6 +993,47 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                         tagType = optString("tag_type")
                         uri = optString("uri")
                     }
+                }
+            }
+            ownerExt = ownerExt {
+                result.optJSONObject("owner_ext")?.run {
+                    officialVerify = officialVerify {
+                        optJSONObject("official_verify")?.run {
+                            type = optInt("type")
+                            desc = optString("desc")
+                        }
+                    }
+                    vip = vip {
+                        optJSONObject("vip")?.run {
+                            vipType = optInt("vipType")
+                            dueDate = optLong("vipDueDate")
+                            dueRemark = optString("dueRemark")
+                            accessStatus = optInt("accessStatus")
+                            vipStatus = optInt("vipStatus")
+                            vipStatusWarn = optString("vipStatusWarn")
+                            themeType = optInt("themeType")
+                            label = vipLabel {
+                                optJSONObject("label")?.run {
+                                    path = optString("path")
+                                    text = optString("text")
+                                    labelTheme = optString("label_theme")
+                                }
+                            }
+                        }
+                    }
+                    fans = optLong("fans")
+                    arcCount = optString("arc_count")
+                }
+            }
+            config = config {
+                result.optJSONObject("config")?.run {
+                    relatesTitle = optString("relates_title")
+                    abtestSmallWindow = optString("abtest_small_window")
+                    recThreePointStyle = optInt("rec_three_point_style")
+                    isAbsoluteTime = optBoolean("is_absolute_time")
+                    relatesFeedStyle = optString("feed_style")
+                    relatesFeedHasNext = optBoolean("feed_has_next")
+                    localPlay = optInt("local_play")
                 }
             }
         }
@@ -821,13 +1105,6 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         for (episode in result?.optJSONArray("episodes").orEmpty()) {
             if (episode.optInt("status") == 13) episode.put("status", 2)
         }
-    }
-
-    private fun getUrl(response: Any): String? {
-        val requestField = instance.requestField() ?: return null
-        val urlField = instance.urlField() ?: return null
-        val request = response.getObjectField(requestField)
-        return request?.getObjectField(urlField)?.toString()
     }
 
     private fun setErrorMessage(activity: Activity) {

@@ -47,6 +47,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
         private lateinit var prefs: SharedPreferences
         private lateinit var biliprefs: SharedPreferences
         private var counter: Int = 0
+        private var customSubtitleDialog: CustomSubtitleDialog? = null
 
         @Deprecated("Deprecated in Java")
         override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +81,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             findPreference("share_log")?.onPreferenceClickListener = this
             findPreference("customize_drawer")?.onPreferenceClickListener = this
             findPreference("custom_link")?.onPreferenceClickListener = this
-            findPreference("add_custom_button")?.onPreferenceClickListener = this
+            findPreference("add_custom_button")?.onPreferenceChangeListener = this
             findPreference("customize_dynamic")?.onPreferenceClickListener = this
             checkCompatibleVersion()
             checkUpdate()
@@ -127,21 +128,23 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             val supportMain = !isBuiltIn || !is64 || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
             var supportDrawer = instance.homeUserCenterClass != null
             var supportDrawerStyle = true
+            val supportRevertLive = versionCode < 6830000
+            var supportAddTag = true
             when (platform) {
                 "android_hd" -> {
                     supportCustomizeTab = false
                     supportDrawer = false
                     supportDrawerStyle = false
+                    supportAddTag = false
                 }
             }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
                 supportMusicNotificationHook = false
             val supportSplashHook = instance.brandSplashClass != null
             val supportTeenagersMode = instance.teenagersModeDialogActivityClass != null
-            val supportCustomizeCC = instance.subtitleSpanClass != null
             val supportStoryVideo = instance.storyVideoActivityClass != null
             val supportPurifyShare = instance.shareClickResultClass != null
-            val supportDownloadThread = versionCode < 6630000
+            val supportDownloadThread = versionCode < 6630000 || versionCode >= 6900000
             if (!supportDrawer)
                 disablePreference("drawer")
             if (!supportSplashHook) {
@@ -167,9 +170,6 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
                 disablePreference("customize_home_tab_title")
                 disablePreference("customize_bottom_bar_title")
             }
-            if (!supportCustomizeCC) {
-                disablePreference("custom_subtitle")
-            }
             if (!supportStoryVideo) {
                 disablePreference("replace_story_video")
             }
@@ -182,6 +182,14 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             }
             if (!supportDownloadThread) {
                 disablePreference("custom_download_thread")
+            }
+            if (!supportRevertLive) {
+                disablePreference("revert_live_room_feed")
+            }
+            if (!supportAddTag) {
+                disablePreference("add_bangumi")
+                disablePreference("add_korea")
+                disablePreference("add_movie")
             }
         }
 
@@ -197,7 +205,9 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
         }
 
         private fun showCustomSubtitle() {
-            CustomSubtitleDialog(activity, prefs).show()
+            CustomSubtitleDialog(activity, this, prefs).also {
+                customSubtitleDialog = it
+            }.show()
         }
 
         @Deprecated("Deprecated in Java")
@@ -212,9 +222,12 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
                         selectImage(LOGO_SELECTION)
                 }
                 "custom_subtitle" -> {
-                    if (newValue as Boolean) {
+                    if (newValue as Boolean)
                         showCustomSubtitle()
-                    }
+                }
+                "add_custom_button" -> {
+                    if (newValue as Boolean)
+                        onAddCustomButtonClick()
                 }
             }
             return true
@@ -235,6 +248,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
 
         @Deprecated("Deprecated in Java")
         override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            customSubtitleDialog?.onActivityResult(requestCode, resultCode, data)
             when (requestCode) {
                 SPLASH_SELECTION, LOGO_SELECTION -> {
                     val destFile = when (requestCode) {
@@ -294,7 +308,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
                     try {
                         videosToExport.forEach { video ->
                             targetDir.findOrCreateDir(video.parentFile!!.name)
-                                ?.let { DocumentFile.fromFile(video).copyTo(activity, it) }
+                                ?.let { DocumentFile.fromFile(video).copyTo(it) }
                         }
                         Log.toast("导出成功", true)
                     } catch (e: Exception) {
@@ -622,7 +636,6 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             "share_log" -> onShareLogClick()
             "customize_drawer" -> onCustomizeDrawerClick()
             "custom_link" -> onCustomLinkClick()
-            "add_custom_button" -> onAddCustomButtonClick()
             "customize_dynamic" -> onCustomDynamicClick()
             else -> false
         }

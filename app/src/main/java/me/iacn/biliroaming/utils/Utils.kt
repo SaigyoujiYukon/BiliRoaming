@@ -6,9 +6,10 @@ import android.content.Context
 import android.content.pm.PackageManager.GET_META_DATA
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.util.TypedValue
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
+import androidx.annotation.RequiresApi
 import androidx.documentfile.provider.DocumentFile
 import com.google.protobuf.GeneratedMessageLite
 import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
@@ -23,6 +24,7 @@ import java.lang.ref.WeakReference
 import java.math.BigInteger
 import java.net.URL
 import java.util.*
+import kotlin.math.roundToInt
 import kotlin.reflect.KProperty
 
 class Weak(val initializer: () -> Class<*>?) {
@@ -152,6 +154,10 @@ fun signQuery(query: String?, extraMap: Map<String, String> = emptyMap()): Strin
 fun getId(name: String) = instance.ids[name]
     ?: currentContext.resources.getIdentifier(name, "id", currentContext.packageName)
 
+@SuppressLint("DiscouragedApi")
+fun getResId(name: String, type: String) =
+    currentContext.resources.getIdentifier(name, type, currentContext.packageName)
+
 fun getBitmapFromURL(src: String?, callback: (Bitmap?) -> Unit) {
     Thread {
         callback(try {
@@ -188,19 +194,20 @@ fun getStreamContent(input: InputStream) = try {
 /**
  * @param targetDir 目标文件夹
  */
-fun DocumentFile.copyTo(context: Context, targetDir: DocumentFile) {
-    val name = this.name ?: return
-    if (this.isDirectory) {
+fun DocumentFile.copyTo(targetDir: DocumentFile) {
+    val name = name ?: return
+    if (isDirectory) {
         val chile = targetDir.findOrCreateDir(name) ?: return
-        this.listFiles().forEach {
-            it.copyTo(context, chile)
+        listFiles().forEach {
+            it.copyTo(chile)
         }
-    } else if (this.isFile) {
-        val type = this.type ?: return
+    } else if (isFile) {
+        val type = type ?: return
         val targetFile = targetDir.createFile(type, name) ?: return
-        val `in` = context.contentResolver.openInputStream(this.uri) ?: return
-        val out = context.contentResolver.openOutputStream(targetFile.uri) ?: return
-        `in`.copyTo(out)
+        currentContext.contentResolver.openInputStream(uri)?.use {
+            currentContext.contentResolver.openOutputStream(targetFile.uri)
+                ?.use { o -> it.copyTo(o) }
+        }
     }
 }
 
@@ -227,6 +234,7 @@ fun GeneratedMessageLite<*, *>.print(indent: Int = 0): String {
                 sb.appendLine(name)
                 sb.append(v.print(indent + 1))
             }
+
             is List<*> -> {
                 for (vv in v) {
                     sb.append(name)
@@ -235,12 +243,14 @@ fun GeneratedMessageLite<*, *>.print(indent: Int = 0): String {
                             sb.appendLine()
                             sb.append(vv.print(indent + 1))
                         }
+
                         else -> {
                             sb.appendLine(vv?.toString() ?: "null")
                         }
                     }
                 }
             }
+
             else -> {
                 sb.append(name)
                 sb.appendLine(v?.toString() ?: "null")
@@ -271,17 +281,17 @@ fun View.addBackgroundRipple() = with(TypedValue()) {
 fun migrateHomeFilterPrefsIfNeeded() {
     if (!sPrefs.getBoolean("home_filter_prefs_migrated", false)) {
         val titleList = sPrefs.getString("keywords_filter_title_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
         val reasonList = sPrefs.getString("keywords_filter_reason_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
         val uidList = sPrefs.getString("keywords_filter_uid_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
         val upList = sPrefs.getString("keywords_filter_upname_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
         val categoryList = sPrefs.getString("keywords_filter_rname_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
         val channelList = sPrefs.getString("keywords_filter_tname_recommend_list", null)
-            ?.split('|')?.filter { it.trim().isNotEmpty() }?.toSet()
+            ?.split('|')?.filter { it.isNotBlank() }?.toSet()
 
         sPrefs.edit().apply {
             putStringSet("home_filter_keywords_title", titleList)
@@ -294,3 +304,52 @@ fun migrateHomeFilterPrefsIfNeeded() {
         }.commit()
     }
 }
+
+fun getRetrofitUrl(response: Any): String? {
+    val requestField = instance.requestField() ?: return null
+    val urlField = instance.urlField() ?: return null
+    val request = response.getObjectField(requestField)
+    return request?.getObjectField(urlField)?.toString()
+}
+
+fun Window.blurBackground() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+    attributes.blurBehindRadius = 50
+    setBackgroundBlurRadius(50)
+    val blurEnableListener = { enable: Boolean ->
+        setDimAmount(if (enable) 0.1F else 0.6F)
+    }
+    decorView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        @RequiresApi(Build.VERSION_CODES.S)
+        override fun onViewAttachedToWindow(v: View) {
+            windowManager.addCrossWindowBlurEnabledListener(blurEnableListener)
+        }
+
+        @RequiresApi(Build.VERSION_CODES.S)
+        override fun onViewDetachedFromWindow(v: View) {
+            windowManager.removeCrossWindowBlurEnabledListener(blurEnableListener)
+        }
+
+    })
+    addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+}
+
+val Int.sp: Int
+    inline get() = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        toFloat(),
+        currentContext.resources.displayMetrics
+    ).roundToInt()
+
+val Int.dp: Int
+    inline get() = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP,
+        toFloat(),
+        currentContext.resources.displayMetrics
+    ).roundToInt()
+
+@Suppress("DEPRECATION")
+val currentIsLandscape: Boolean
+    get() = currentContext.getSystemService(WindowManager::class.java)
+        .defaultDisplay.orientation.let { it == Surface.ROTATION_90 || it == Surface.ROTATION_270 }
